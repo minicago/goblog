@@ -1,0 +1,21 @@
+{{ define "title" }}首页 - 聚合博客{{ end }}
+{{ define "content" }}
+<h2>最新文章</h2>
+{{ if not .Posts }}
+<p>还没有任何文章。请在 <code>config.json</code> 中配置仓库，并在对应仓库中添加 Markdown 文件后触发一次构建。</p>
+{{ else }}
+<ul>
+    {{ range .Posts }}
+    <li>
+        <a href="/{{ .Path }}">{{ .Title }}</a>
+        <span style="color:#9ca3af;font-size:.85rem;margin-left:.25rem">
+            {{ .Date.Format "2006-01-02 15:04" }}
+        </span>
+        <span style="color:#6b7280;font-size:.8rem;margin-left:.25rem">
+            [<a href="/{{ .BlogTitle }}">{{ .BlogTitle }}</a>]
+        </span>
+    </li>
+    {{ end }}
+{{ end }}
+{{ end }}
+

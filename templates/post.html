@@ -1,0 +1,14 @@
+{{ define "title" }}{{ .Title }} - 我的博客{{ end }}
+{{ define "content" }}
+<article>
+    <h1>{{ .Title }}</h1>
+    <p style="color:#9ca3af;font-size:.9rem">
+        发布于 {{ .Date.Format "2006-01-02 15:04" }}
+    </p>
+    <hr style="margin:1rem 0 1.5rem;border:none;border-top:1px solid #e5e7eb">
+    <div class="post-body">
+        {{ .Content }}
+    </div>
+</article>
+{{ end }}
+

@@ -1,0 +1,427 @@
+package site
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/yuin/goldmark"
+)
+
+// RepoConfig 表示 config.json 中配置的一个 Git 仓库
+type RepoConfig struct {
+	// URL 为远程 Git 仓库地址（必填）
+	URL string `json:"url"`
+	// Title 用作 hostname/{title} 中的 title，可选；若为空，则从 URL 自动推导（使用仓库名）
+	Title string `json:"title,omitempty"`
+	// Dir 为该仓库在当前项目中的工作目录，相对于项目根目录，可选；
+	// 若为空，则自动使用 "repos/{repoName}"，其中 repoName 从 URL 推导。
+	Dir string `json:"dir,omitempty"`
+}
+
+// Config 是 config.json 的整体结构
+type Config struct {
+	Repos []RepoConfig `json:"repos"`
+}
+
+// Post 表示一篇博客文章的元信息和内容
+type Post struct {
+	Title     string
+	Slug      string
+	Path      string // 相对输出路径，例如 "go/hello-world/index.html"
+	BlogTitle string // 来自 RepoConfig.Title，用于 hostname/{title}
+	Date      time.Time
+	Content   template.HTML
+}
+
+// BuildSite 从 config.json 中配置的各个仓库读取 Markdown，生成到 outputDir
+// 仓库目录结构约定为：{Dir}/*.md，例如项目根目录下 tech/*.md、life/*.md
+func BuildSite(configPath, outputDir string) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+
+	repos, err := normalizeRepos(cfg.Repos)
+	if err != nil {
+		return err
+	}
+
+	// 先确保所有仓库已经 clone / pull 到最新
+	if err := syncRepos(repos); err != nil {
+		return err
+	}
+
+	if err := os.RemoveAll(outputDir); err != nil {
+		return fmt.Errorf("清理输出目录失败: %w", err)
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Errorf("创建输出目录失败: %w", err)
+	}
+
+	var allPosts []Post
+	postsByBlog := make(map[string][]Post)
+
+	for _, repo := range repos {
+		posts, err := collectPostsFromRepo(repo)
+		if err != nil {
+			return err
+		}
+		if len(posts) == 0 {
+			continue
+		}
+		allPosts = append(allPosts, posts...)
+		postsByBlog[repo.Title] = posts
+	}
+
+	// 全站按时间倒序排列
+	sort.Slice(allPosts, func(i, j int) bool {
+		return allPosts[i].Date.After(allPosts[j].Date)
+	})
+
+	if err := writePosts(outputDir, allPosts); err != nil {
+		return err
+	}
+	if err := writeGlobalIndex(outputDir, allPosts); err != nil {
+		return err
+	}
+	if err := writeBlogIndexes(outputDir, postsByBlog); err != nil {
+		return err
+	}
+	if err := writeHelp(outputDir, repos); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// loadConfig 读取并解析 config.json
+func loadConfig(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取配置文件失败 %s: %w", path, err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("解析配置文件失败 %s: %w", path, err)
+	}
+	return &cfg, nil
+}
+
+// normalizeRepos 根据 URL 自动推导缺失的 Title 和 Dir
+// - 若 Title 为空，则使用 repoName（从 URL 解析出的仓库名）作为 Title
+// - 若 Dir 为空，则使用 "repos/{repoName}" 作为本地目录
+func normalizeRepos(repos []RepoConfig) ([]RepoConfig, error) {
+	out := make([]RepoConfig, 0, len(repos))
+	for _, r := range repos {
+		if r.URL == "" {
+			return nil, fmt.Errorf("配置错误: 存在缺少 url 的仓库配置")
+		}
+		name, err := repoNameFromURL(r.URL)
+		if err != nil {
+			return nil, fmt.Errorf("从 URL 解析仓库名失败 %q: %w", r.URL, err)
+		}
+		if r.Title == "" {
+			r.Title = name
+		}
+		if r.Dir == "" {
+			r.Dir = filepath.Join("repos", name)
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// repoNameFromURL 从常见的 Git URL 中解析仓库名
+// 示例：
+// - https://github.com/user/repo.git -> "repo"
+// - git@github.com:user/repo.git    -> "repo"
+func repoNameFromURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("空 URL")
+	}
+	// 去掉末尾的斜杠
+	raw = strings.TrimRight(raw, "/")
+	// 找到最后一个 / 或 :
+	i := strings.LastIndexAny(raw, "/:")
+	if i == -1 || i == len(raw)-1 {
+		return "", fmt.Errorf("无法从 URL 提取仓库名: %s", raw)
+	}
+	name := raw[i+1:]
+	name = strings.TrimSuffix(name, ".git")
+	if name == "" {
+		return "", fmt.Errorf("解析到空仓库名: %s", raw)
+	}
+	return name, nil
+}
+
+// syncRepos 根据配置对每个仓库执行 git clone / git pull
+func syncRepos(repos []RepoConfig) error {
+	for _, repo := range repos {
+		if err := syncRepo(repo); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncRepo 确保单个仓库在本地可用：
+// - 如果配置了 URL 且目录不存在：执行 git clone
+// - 如果配置了 URL 且目录已存在且是 Git 仓库：执行 git pull
+// - 如果未配置 URL：仅检查目录存在
+func syncRepo(repo RepoConfig) error {
+	info, err := os.Stat(repo.Dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// 目录不存在，如果配置了 URL，则 clone
+			if repo.URL == "" {
+				return fmt.Errorf("本地仓库目录不存在且未配置 URL: %s", repo.Dir)
+			}
+			return gitClone(repo.URL, repo.Dir)
+		}
+		return fmt.Errorf("检查目录失败 %s: %w", repo.Dir, err)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("路径不是目录: %s", repo.Dir)
+	}
+
+	// 目录存在，如果配置了 URL，则尝试 pull
+	if repo.URL != "" {
+		if _, err := os.Stat(filepath.Join(repo.Dir, ".git")); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("目录 %s 存在但不是 Git 仓库（缺少 .git）", repo.Dir)
+			}
+			return fmt.Errorf("检查 .git 目录失败 %s: %w", repo.Dir, err)
+		}
+		return gitPull(repo.Dir)
+	}
+
+	// 未配置 URL，且目录存在，直接使用本地内容
+	return nil
+}
+
+func gitClone(url, dir string) error {
+	cmd := exec.Command("git", "clone", "--depth", "1", url, dir)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func gitPull(dir string) error {
+	cmd := exec.Command("git", "-C", dir, "pull", "--ff-only")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// collectPostsFromRepo 扫描单个仓库目录下的 .md 文件
+func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
+	var posts []Post
+	md := goldmark.New()
+
+	root := repo.Dir
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if filepath.Ext(d.Name()) != ".md" {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("读取文件失败 %s: %w", path, err)
+		}
+
+		title, body := extractTitleAndBody(string(data))
+
+		var buf bytes.Buffer
+		if err := md.Convert([]byte(body), &buf); err != nil {
+			return fmt.Errorf("Markdown 转 HTML 失败 %s: %w", path, err)
+		}
+
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		slug := strings.TrimSuffix(rel, filepath.Ext(rel))
+		// 输出路径：{title}/{slug}/index.html
+		outPath := filepath.ToSlash(filepath.Join(repo.Title, slug, "index.html"))
+
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+
+		post := Post{
+			Title:     title,
+			Slug:      slug,
+			Path:      outPath,
+			BlogTitle: repo.Title,
+			Date:      info.ModTime(),
+			Content:   template.HTML(buf.String()),
+		}
+		posts = append(posts, post)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 每个仓库内部也按时间倒序排列
+	sort.Slice(posts, func(i, j int) bool {
+		return posts[i].Date.After(posts[j].Date)
+	})
+
+	return posts, nil
+}
+
+func extractTitleAndBody(s string) (string, string) {
+	lines := strings.Split(s, "\n")
+	if len(lines) == 0 {
+		return "Untitled", ""
+	}
+	first := strings.TrimSpace(lines[0])
+	if strings.HasPrefix(first, "# ") {
+		return strings.TrimSpace(strings.TrimPrefix(first, "# ")), strings.Join(lines[1:], "\n")
+	}
+	return "Untitled", s
+}
+
+// writePosts 将每篇文章渲染到独立页面
+func writePosts(outputDir string, posts []Post) error {
+	tmpl, err := loadTemplate("post")
+	if err != nil {
+		return err
+	}
+
+	for _, p := range posts {
+		outPath := filepath.Join(outputDir, filepath.FromSlash(p.Path))
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+			return err
+		}
+
+		f, err := os.Create(outPath)
+		if err != nil {
+			return err
+		}
+
+		if err := tmpl.Execute(f, p); err != nil {
+			_ = f.Close()
+			return err
+		}
+		_ = f.Close()
+	}
+	return nil
+}
+
+// writeGlobalIndex 生成全站首页（根目录 index.html 和 /index）
+func writeGlobalIndex(outputDir string, posts []Post) error {
+	tmpl, err := loadTemplate("index")
+	if err != nil {
+		return err
+	}
+
+	data := struct {
+		Posts []Post
+	}{
+		Posts: posts,
+	}
+
+	// 1) 根目录 index.html（/）
+	rootIndex := filepath.Join(outputDir, "index.html")
+	if err := writeTemplateFile(rootIndex, tmpl, data); err != nil {
+		return err
+	}
+
+	// 2) /index/ （hostname/index）
+	indexDir := filepath.Join(outputDir, "index")
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		return err
+	}
+	indexFile := filepath.Join(indexDir, "index.html")
+	return writeTemplateFile(indexFile, tmpl, data)
+}
+
+// writeBlogIndexes 为每个博客生成 hostname/{title} 首页
+func writeBlogIndexes(outputDir string, postsByBlog map[string][]Post) error {
+	if len(postsByBlog) == 0 {
+		return nil
+	}
+
+	tmpl, err := loadTemplate("index")
+	if err != nil {
+		return err
+	}
+
+	for title, posts := range postsByBlog {
+		dir := filepath.Join(outputDir, title)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		outPath := filepath.Join(dir, "index.html")
+		data := struct {
+			Posts []Post
+		}{
+			Posts: posts,
+		}
+		if err := writeTemplateFile(outPath, tmpl, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeHelp 生成 /help 页面
+func writeHelp(outputDir string, repos []RepoConfig) error {
+	tmpl, err := loadTemplate("help")
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Join(outputDir, "help")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	outPath := filepath.Join(dir, "index.html")
+
+	data := struct {
+		Repos []RepoConfig
+	}{
+		Repos: repos,
+	}
+
+	return writeTemplateFile(outPath, tmpl, data)
+}
+
+// writeTemplateFile 是一个小工具函数，用于将模板执行结果写入文件
+func writeTemplateFile(path string, tmpl *template.Template, data any) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return tmpl.Execute(f, data)
+}
+
+// loadTemplate 从 templates 目录加载模板
+func loadTemplate(name string) (*template.Template, error) {
+	base := "templates/base.html"
+	page := fmt.Sprintf("templates/%s.html", name)
+	return template.ParseFiles(base, page)
+}
+
