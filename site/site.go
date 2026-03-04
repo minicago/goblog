@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +46,7 @@ type Post struct {
 
 // BuildSite 从 config.json 中读取唯一的仓库，扫描仓库根目录下的 Markdown 文件并生成到 outputDir。
 // 每个 Markdown 文件会被渲染为一篇文章，标题由文件名（不含扩展名）决定。
-// 旧版本支持多个仓库并递归扫描，此处简化为单仓库，不进入子目录。
+// 旧版本支持minicago blog仓库并递归扫描，此处简化为单仓库，不进入子目录。
 func BuildSite(configPath, outputDir string) error {
 	cfg, err := loadConfig(configPath)
 	if err != nil {
