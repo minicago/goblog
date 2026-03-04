@@ -100,26 +100,6 @@ func BuildSite(configPath, outputDir string) error {
 
 	return nil
 }
-	// 全站按时间倒序排列
-	sort.Slice(allPosts, func(i, j int) bool {
-		return allPosts[i].Date.After(allPosts[j].Date)
-	})
-
-	if err := writePosts(outputDir, allPosts); err != nil {
-		return err
-	}
-	if err := writeGlobalIndex(outputDir, allPosts); err != nil {
-		return err
-	}
-	if err := writeBlogIndexes(outputDir, postsByBlog); err != nil {
-		return err
-	}
-	if err := writeHelp(outputDir, repos); err != nil {
-		return err
-	}
-
-	return nil
-}
 
 // loadConfig 读取并解析 config.json
 func loadConfig(path string) (*Config, error) {
