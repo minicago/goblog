@@ -125,6 +125,10 @@ func normalizeRepos(repos []RepoConfig) ([]RepoConfig, error) {
 		if r.URL == "" {
 			return nil, fmt.Errorf("配置错误: 存在缺少 url 的仓库配置")
 		}
+		// 对常见 SSH 形式的 GitHub 地址做一次归一化，优先使用 HTTPS，
+		// 这样 public 仓库可以直接拉取而不依赖本机 SSH key。
+		r.URL = normalizeGitURL(r.URL)
+
 		name, err := repoNameFromURL(r.URL)
 		if err != nil {
 			return nil, fmt.Errorf("从 URL 解析仓库名失败 %q: %w", r.URL, err)
@@ -162,6 +166,24 @@ func repoNameFromURL(raw string) (string, error) {
 		return "", fmt.Errorf("解析到空仓库名: %s", raw)
 	}
 	return name, nil
+}
+
+// normalizeGitURL 将常见的 SSH 形式 GitHub 地址转换为 HTTPS，
+// 以便在公共仓库场景下无需 SSH key 就能直接 clone/pull。
+// 例如：
+// - git@github.com:user/repo.git    -> https://github.com/user/repo.git
+// - ssh://git@github.com/user/repo  -> https://github.com/user/repo
+func normalizeGitURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	if strings.HasPrefix(s, "git@github.com:") {
+		rest := strings.TrimPrefix(s, "git@github.com:")
+		return "https://github.com/" + rest
+	}
+	if strings.HasPrefix(s, "ssh://git@github.com/") {
+		rest := strings.TrimPrefix(s, "ssh://git@github.com/")
+		return "https://github.com/" + rest
+	}
+	return raw
 }
 
 // syncRepos 根据配置对每个仓库执行 git clone / git pull
