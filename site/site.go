@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	
+	"github.com/FurqanSoftware/goldmark-katex"
 )
 
 // RepoConfig 表示 config.json 中配置的一个 Git 仓库
@@ -42,8 +45,9 @@ type Post struct {
 	Content   template.HTML
 }
 
-// BuildSite 从 config.json 中配置的各个仓库读取 Markdown，生成到 outputDir
-// 仓库目录结构约定为：{Dir}/*.md，例如项目根目录下 tech/*.md、life/*.md
+// BuildSite 从 config.json 中读取唯一的仓库，扫描仓库根目录下的 Markdown 文件并生成到 outputDir。
+// 每个 Markdown 文件会被渲染为一篇文章，标题由文件名（不含扩展名）决定。
+// 旧版本支持多个仓库并递归扫描，此处简化为单仓库，不进入子目录。
 func BuildSite(configPath, outputDir string) error {
 	cfg, err := loadConfig(configPath)
 	if err != nil {
@@ -55,8 +59,14 @@ func BuildSite(configPath, outputDir string) error {
 		return err
 	}
 
-	// 先确保所有仓库已经 clone / pull 到最新
-	if err := syncRepos(repos); err != nil {
+	// 当前只支持一个仓库，忽略多余配置
+	if len(repos) == 0 {
+		return fmt.Errorf("配置中未指定任何仓库")
+	}
+	repo := repos[0]
+
+	// 确保仓库已经 clone / pull 到最新
+	if err := syncRepo(repo); err != nil {
 		return err
 	}
 
@@ -67,21 +77,29 @@ func BuildSite(configPath, outputDir string) error {
 		return fmt.Errorf("创建输出目录失败: %w", err)
 	}
 
-	var allPosts []Post
-	postsByBlog := make(map[string][]Post)
-
-	for _, repo := range repos {
-		posts, err := collectPostsFromRepo(repo)
-		if err != nil {
-			return err
-		}
-		if len(posts) == 0 {
-			continue
-		}
-		allPosts = append(allPosts, posts...)
-		postsByBlog[repo.Title] = posts
+	posts, err := collectPostsFromRepo(repo)
+	if err != nil {
+		return err
 	}
 
+	// 全站按时间倒序排列
+	sort.Slice(posts, func(i, j int) bool {
+		return posts[i].Date.After(posts[j].Date)
+	})
+
+	if err := writePosts(outputDir, posts); err != nil {
+		return err
+	}
+	if err := writeGlobalIndex(outputDir, posts); err != nil {
+		return err
+	}
+	// 个人博客功能无需生成额外索引
+	if err := writeHelp(outputDir, []RepoConfig{repo}); err != nil {
+		return err
+	}
+
+	return nil
+}
 	// 全站按时间倒序排列
 	sort.Slice(allPosts, func(i, j int) bool {
 		return allPosts[i].Date.After(allPosts[j].Date)
@@ -246,82 +264,80 @@ func gitPull(dir string) error {
 	return cmd.Run()
 }
 
-// collectPostsFromRepo 扫描单个仓库目录下的 .md 文件
+// collectPostsFromRepo 只扫描仓库根目录下的 Markdown 文件，标题使用文件名
 func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
 	var posts []Post
-	md := goldmark.New()
+	// 使用带有 GFM、表格、链接、图片和数学支持的 Markdown 解析器
+	md := goldmark.New(
+		goldmark.WithExtensions(
+			extension.GFM,
+			extension.Linkify,
+			extension.Strikethrough,
+			extension.Typographer,
+			extension.Table,
+			extension.DefinitionList,
+			extension.Footnote,
+		&katex.Extender{}, // math support via KaTeX
+		// 更多扩展可在此追加
+		// 图片、链接等在 GFM 中已支持
+		// 如果需要自动编号等，可加入其他扩展
+		// 上面的包都在 imports 中声明
+		),
+	)
 
 	root := repo.Dir
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
 		}
-		if d.IsDir() {
-			return nil
-		}
-		if filepath.Ext(d.Name()) != ".md" {
-			return nil
+		if filepath.Ext(entry.Name()) != ".md" {
+			continue
 		}
 
+		path := filepath.Join(root, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("读取文件失败 %s: %w", path, err)
+			return nil, fmt.Errorf("读取文件失败 %s: %w", path, err)
 		}
 
-		title, body := extractTitleAndBody(string(data))
+		title := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		body := string(data)
 
 		var buf bytes.Buffer
 		if err := md.Convert([]byte(body), &buf); err != nil {
-			return fmt.Errorf("Markdown 转 HTML 失败 %s: %w", path, err)
+			return nil, fmt.Errorf("Markdown 转 HTML 失败 %s: %w", path, err)
 		}
 
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		slug := strings.TrimSuffix(rel, filepath.Ext(rel))
-		// 输出路径：{title}/{slug}/index.html
-		outPath := filepath.ToSlash(filepath.Join(repo.Title, slug, "index.html"))
+		slug := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		outPath := filepath.ToSlash(filepath.Join(slug, "index.html"))
 
 		info, err := os.Stat(path)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		post := Post{
 			Title:     title,
 			Slug:      slug,
 			Path:      outPath,
-			BlogTitle: repo.Title,
+			BlogTitle: "", // 现在仅一个仓库，无需博客标题
 			Date:      info.ModTime(),
 			Content:   template.HTML(buf.String()),
 		}
 		posts = append(posts, post)
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
 	}
 
-	// 每个仓库内部也按时间倒序排列
+	// 按时间倒序排列
 	sort.Slice(posts, func(i, j int) bool {
 		return posts[i].Date.After(posts[j].Date)
 	})
 
 	return posts, nil
-}
-
-func extractTitleAndBody(s string) (string, string) {
-	lines := strings.Split(s, "\n")
-	if len(lines) == 0 {
-		return "Untitled", ""
-	}
-	first := strings.TrimSpace(lines[0])
-	if strings.HasPrefix(first, "# ") {
-		return strings.TrimSpace(strings.TrimPrefix(first, "# ")), strings.Join(lines[1:], "\n")
-	}
-	return "Untitled", s
 }
 
 // writePosts 将每篇文章渲染到独立页面

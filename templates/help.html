@@ -2,37 +2,33 @@
 {{ define "content" }}
 <h2>帮助</h2>
 
-<p>本网站由多个 Git 仓库中的 Markdown 文件聚合生成。</p>
+<p>本网站由单个 Git 仓库根目录下的 Markdown 文件生成，文件名作为标题。</p>
 
 <h3>1. 仓库配置</h3>
-<p>项目根目录下的 <code>config.json</code> 最简形式只需要写远程仓库 URL，例如：</p>
+<p>项目根目录下的 <code>config.json</code> 示例（只有一项）：</p>
 <pre><code>{
   "repos": [
-    { "url": "git@github.com:you/tech-blog.git" },
-    { "url": "https://github.com/you/life-notes.git" }
+    { "url": "git@github.com:you/tech-blog.git" }
   ]
 }</code></pre>
 <ul>
     <li><code>url</code>：远程 Git 仓库地址，必填。</li>
-    <li><code>title</code>（可选）：用于 URL 中的路径段，例如 <code>/tech</code>；如果不写，则自动使用仓库名（例如 <code>tech-blog.git</code> → <code>tech-blog</code>）。</li>
-    <li><code>dir</code>（可选）：该仓库在当前项目中的本地目录，相对于项目根目录；如果不写，则默认 <code>repos/&lt;仓库名&gt;</code>。</li>
+    <li><code>dir</code>（可选）：该仓库在当前项目中的本地目录；默认 <code>repos/&lt;仓库名&gt;</code>。</li>
 </ul>
 
 <h3>2. 仓库结构</h3>
-<p>每个仓库目录内部约定为：<code>title/*.md</code>，例如：</p>
+<p>服务器只会扫描仓库根目录下的 Markdown 文件，子目录会被忽略。例如：</p>
 <pre><code>project-root/
-├── tech/          # 一个 Git 仓库工作目录
-│   ├── post1.md
-│   └── post2.md
-└── life/          # 另一个仓库
-    └── note1.md
+└── tech-blog/
+    ├── post1.md
+    ├── another.md
+    └── subdir/
 </code></pre>
 
 <h3>3. 访问说明</h3>
 <ul>
-    <li><code>/index</code>：全站最新文章列表（聚合所有仓库）</li>
-    <li><code>/&lt;title&gt;</code>：对应仓库（博客）的文章列表，例如 <code>/tech</code>、<code>/life</code></li>
-    <li><code>/&lt;title&gt;/&lt;slug&gt;/</code>：具体某篇文章，例如 <code>/tech/post1/</code></li>
+    <li><code>/index</code>：文章列表</li>
+    <li><code>/&lt;slug&gt;/</code>：具体某篇文章，例如 <code>/post1/</code></li>
     <li><code>/help</code>：当前帮助页面</li>
 </ul>
 

@@ -2,7 +2,7 @@
 
 本项目是一个用 Go 编写的轻量级静态博客聚合服务器，具备以下能力：
 
-- 从多个 Git 仓库的工作目录中读取 Markdown（结构为 `title/*.md`）
+- 从单个 Git 仓库的工作目录根目录读取 Markdown，文件名（去掉 `.md`）作为标题
 - 使用 Markdown 生成静态页面（全站首页 + 各博客首页 + 单篇文章页）
 - 通过 Git Hook 或 Git 托管平台 Webhook 触发自动重新构建
 - 内置 HTTP 服务器直接托管生成后的静态文件
@@ -19,15 +19,14 @@
 └── go.mod
 ```
 
-## 1. config.json：配置多个 Git 仓库（只写 URL）
+## 1. config.json：配置单个 Git 仓库（只需指定 url）
 
-在项目根目录创建 `config.json`，示例如下（**最简形式只需要 url**）：
+在项目根目录创建 `config.json`，示例如下（**仅一项**）：
 
 ```json
 {
   "repos": [
-    { "url": "git@github.com:you/tech-blog.git" },
-    { "url": "https://github.com/you/life-notes.git" }
+    { "url": "git@github.com:you/tech-blog.git" }
   ]
 }
 ```
@@ -50,26 +49,37 @@
 
 ## 2. Git 仓库目录结构约定
 
-每个配置的 `dir` 目录内部约定为：`title/*.md`，也就是：
+当前版本只会扫描指定仓库的**根目录**下的 Markdown 文件，**不会递归子目录**。例如：
 
 ```text
 project-root/
-├── tech/          # 一个 Git 仓库工作目录（在此目录下 git init / git clone）
-│   ├── post1.md
-│   └── post2.md
-└── life/          # 另一个仓库
-    └── note1.md
+└── tech-blog/     # Git 仓库工作目录
+    ├── post1.md
+    ├── another.md
+    └── subdir/    # 此目录中的 .md 文件不会被处理
 ```
 
-Markdown 文件示例 `tech/post1.md`：
+每个 `.md` 文件的名称（去掉 `.md` 后缀）将作为文章标题，文件内容的第一行不再影响标题。
+
+Markdown 语法支持表格、链接、图片、以及 LaTeX 公式 (KaTeX 渲染)。
+
+示例 `tech-blog/post1.md`：
 
 ```markdown
-# Hello Tech
+这是第一篇文章，文件名为 `post1`。
 
-这里是 tech 博客的一篇文章。
+以下是一个表格：
+
+| A | B |
+|---|---|
+| 1 | 2 |
+
+行内公式 $E=mc^2$，块级公式：
+
+$$
+\int_0^1 x^2 dx = 1/3
+$$
 ```
-
-> 约定：每个 `.md` 的第一行如果是 `# 标题`，会被作为文章标题，其余部分视为正文。
 
 ## 3. 启动服务器
 
