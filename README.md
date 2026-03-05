@@ -63,6 +63,13 @@ project-root/
 
 Markdown 语法支持表格、链接、图片、以及 LaTeX 公式 (KaTeX 渲染)。
 
+> **新增**：仓库中的静态文件（例如 PNG/JPG 等图片、HTML 页面、CSS、图床资源等）
+> 会被原样复制到 `public` 目录，支持相对路径引用。文章里使用的
+> 相对链接如 `![...](foo.png)` 或 `[...](page.html)` 会被自动转为
+> `/foo.png` `/page.html`，方便 Markdown 里直接写路径而不必顾虑
+> 生成后页面所在目录。 这样即可把任何图片或者额外页面放在仓库中
+> 并在文章中引用。
+
 示例 `tech-blog/post1.md`：
 
 ```markdown

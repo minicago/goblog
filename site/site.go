@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"io"
+	"regexp"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -74,6 +76,11 @@ func BuildSite(configPath, outputDir string) error {
 	}
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("创建输出目录失败: %w", err)
+	}
+
+	// 复制静态资源（图片、HTML、CSS 等），便于后续 Markdown 中引用
+	if err := copyStaticAssets(repo.Dir, outputDir); err != nil {
+		return fmt.Errorf("复制静态资源失败: %w", err)
 	}
 
 	posts, err := collectPostsFromRepo(repo)
@@ -244,6 +251,8 @@ func gitPull(dir string) error {
 }
 
 // collectPostsFromRepo 只扫描仓库根目录下的 Markdown 文件，标题使用文件名
+// (不递归)。在转换内容之前会修正 Markdown 中的相对链接，以便
+// 访问构建后静态目录中的图像/HTML/其他资源。
 func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
 	var posts []Post
 	// 使用带有 GFM、表格、链接、图片和数学支持的 Markdown 解析器
@@ -287,10 +296,18 @@ func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
 		title := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		body := string(data)
 
+		// 在渲染之前修正 Markdown 中的相对链接，使它们在输出目录中
+		// 能够通过以 `/` 开头的绝对路径访问。
+		body = fixRelativePathsInMarkdown(body)
+
 		var buf bytes.Buffer
 		if err := md.Convert([]byte(body), &buf); err != nil {
 			return nil, fmt.Errorf("Markdown 转 HTML 失败 %s: %w", path, err)
 		}
+		// 渲染完成后，进一步处理生成的 html，针对可能漏掉的情况
+		html := rewriteRelativeLinksInHTML(buf.String())
+		buf.Reset()
+		buf.WriteString(html)
 
 		slug := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		outPath := filepath.ToSlash(filepath.Join(slug, "index.html"))
@@ -435,10 +452,96 @@ func writeTemplateFile(path string, tmpl *template.Template, data any) error {
 	return tmpl.Execute(f, data)
 }
 
+// fixRelativePathsInMarkdown 将 Markdown 文本中所有非绝对或协议开头的链接路径
+// 统一以 `/` 前缀处理。这样用户在 Markdown 里写 `![alt](foo.png)` 或
+// `[链接](page.html)` 时，生成页面中就会变为 `/foo.png` 或 `/page.html`，
+// 对应于输出目录的根。如果路径包含 `./` 或 `../` 会被清理。
+func fixRelativePathsInMarkdown(markdown string) string {
+	re := regexp.MustCompile(`(?m)(!\[[^\]]*\]|\[[^\]]*\])\(([^)]+)\)`)
+	return re.ReplaceAllStringFunc(markdown, func(m string) string {
+		sub := re.FindStringSubmatch(m)
+		if len(sub) < 3 {
+			return m
+		}
+		link := sub[2]
+		// 保留以 http://、https://、/、# 开头的链接不变
+		if strings.HasPrefix(link, "http://") || strings.HasPrefix(link, "https://") ||
+			strings.HasPrefix(link, "/") || strings.HasPrefix(link, "#") {
+			return m
+		}
+		clean := strings.TrimPrefix(link, "./")
+		clean = strings.TrimPrefix(clean, "../")
+		return strings.Replace(m, link, "/"+clean, 1)
+	})
+}
+
+// rewriteRelativeLinksInHTML 对已经生成的 HTML 再做一次检查，针对
+// <a> 和 <img> 等标签，如果属性值仍然是相对路径，则加上 `/` 前缀。
+func rewriteRelativeLinksInHTML(html string) string {
+	re := regexp.MustCompile(`(?i)(?:src|href)="((?!https?://|/|#)[^"]+)"`)
+	return re.ReplaceAllStringFunc(html, func(m string) string {
+		parts := re.FindStringSubmatch(m)
+		if len(parts) < 2 {
+			return m
+		}
+		path := parts[1]
+		clean := strings.TrimPrefix(path, "./")
+		clean = strings.TrimPrefix(clean, "../")
+		return strings.Replace(m, path, "/"+clean, 1)
+	})
+}
+
+// copyStaticAssets 从指定仓库目录复制所有非 Markdown 文件到输出目录，
+// 保留相对路径。该函数会递归遍历仓库目录，但会跳过 `.git` 目录。
+func copyStaticAssets(repoDir, outputDir string) error {
+	return filepath.Walk(repoDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// 忽略 .git 目录
+		if info.IsDir() && info.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) == ".md" {
+			// Markdown 由生成逻辑处理，不复制
+			return nil
+		}
+		rel, err := filepath.Rel(repoDir, path)
+		if err != nil {
+			return err
+		}
+		dest := filepath.Join(outputDir, rel)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		return copyFile(path, dest)
+	})
+}
+
+// copyFile 是一个简单的文件复制工具。
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
 // loadTemplate 从 templates 目录加载模板
 func loadTemplate(name string) (*template.Template, error) {
 	base := "templates/base.html"
 	page := fmt.Sprintf("templates/%s.html", name)
 	return template.ParseFiles(base, page)
 }
-
