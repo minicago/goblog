@@ -478,13 +478,19 @@ func fixRelativePathsInMarkdown(markdown string) string {
 // rewriteRelativeLinksInHTML 对已经生成的 HTML 再做一次检查，针对
 // <a> 和 <img> 等标签，如果属性值仍然是相对路径，则加上 `/` 前缀。
 func rewriteRelativeLinksInHTML(html string) string {
-	re := regexp.MustCompile(`(?i)(?:src|href)="((?!https?://|/|#)[^"]+)"`)
+	// 先匹配任何 src 或 href 属性
+	re := regexp.MustCompile(`(?i)(?:src|href)="([^"]+)"`)
 	return re.ReplaceAllStringFunc(html, func(m string) string {
 		parts := re.FindStringSubmatch(m)
 		if len(parts) < 2 {
 			return m
 		}
 		path := parts[1]
+		// 忽略以 http://、https://、/ 或 # 开头的路径
+		if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") ||
+			strings.HasPrefix(path, "/") || strings.HasPrefix(path, "#") {
+			return m
+		}
 		clean := strings.TrimPrefix(path, "./")
 		clean = strings.TrimPrefix(clean, "../")
 		return strings.Replace(m, path, "/"+clean, 1)
