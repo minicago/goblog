@@ -5,19 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
-	"io"
-	"regexp"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
-	
-	"github.com/FurqanSoftware/goldmark-katex"
+
+	katex "github.com/FurqanSoftware/goldmark-katex"
 )
 
 // RepoConfig 表示 config.json 中配置的一个 Git 仓库
@@ -38,12 +38,14 @@ type Config struct {
 
 // Post 表示一篇博客文章的元信息和内容
 type Post struct {
-	Title     string
-	Slug      string
-	Path      string // 相对输出路径，例如 "go/hello-world/index.html"
-	BlogTitle string // 来自 RepoConfig.Title，用于 hostname/{title}
-	Date      time.Time
-	Content   template.HTML
+	Title      string
+	Slug       string
+	Path       string // 相对输出路径，例如 "go/hello-world/index.html"
+	BlogTitle  string // 来自 RepoConfig.Title，用于 hostname/{title}
+	Date       time.Time
+	Category   string
+	Difficulty string
+	Content    template.HTML
 }
 
 // BuildSite 从 config.json 中读取唯一的仓库，扫描仓库根目录下的 Markdown 文件并生成到 outputDir。
@@ -96,7 +98,7 @@ func BuildSite(configPath, outputDir string) error {
 	if err := writePosts(outputDir, posts); err != nil {
 		return err
 	}
-	if err := writeGlobalIndex(outputDir, posts); err != nil {
+	if err := writeGlobalIndex(outputDir, posts, repo.Dir); err != nil {
 		return err
 	}
 	// 个人博客功能无需生成额外索引
@@ -250,6 +252,51 @@ func gitPull(dir string) error {
 	return cmd.Run()
 }
 
+// extractMetadataFromMarkdown 解析文件开头的 ```metadata ... ``` 块，返回解析出的字段和去掉 metadata 的内容。
+func extractMetadataFromMarkdown(content string) (map[string]string, string) {
+	re := regexp.MustCompile("(?s)^\\s*```metadata\\s*\\n(.*?)\\n```(?:\\r?\\n)?(.*)$")
+	matches := re.FindStringSubmatch(content)
+	if len(matches) != 3 {
+		return nil, content
+	}
+
+	metaText := matches[1]
+	rest := matches[2]
+
+	meta := make(map[string]string)
+	for _, line := range strings.Split(metaText, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		value := strings.TrimSpace(parts[1])
+		meta[key] = value
+	}
+
+	return meta, rest
+}
+
+func parseDateString(s string) (time.Time, error) {
+	formats := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02",
+		"2006/01/02",
+		time.RFC3339,
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("无法解析日期: %s", s)
+}
+
 // collectPostsFromRepo 只扫描仓库根目录下的 Markdown 文件，标题使用文件名
 // (不递归)。在转换内容之前会修正 Markdown 中的相对链接，以便
 // 访问构建后静态目录中的图像/HTML/其他资源。
@@ -265,7 +312,7 @@ func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
 			extension.Table,
 			extension.DefinitionList,
 			extension.Footnote,
-		&katex.Extender{}, // math support via KaTeX
+			&katex.Extender{}, // math support via KaTeX
 		// 更多扩展可在此追加
 		// 图片、链接等在 GFM 中已支持
 		// 如果需要自动编号等，可加入其他扩展
@@ -296,6 +343,25 @@ func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
 		title := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		body := string(data)
 
+		metadata, parsedBody := extractMetadataFromMarkdown(body)
+		if parsedBody != "" {
+			body = parsedBody
+		}
+
+		category := ""
+		difficulty := ""
+		if metadata != nil {
+			if v := strings.TrimSpace(metadata["title"]); v != "" {
+				title = v
+			}
+			if v := strings.TrimSpace(metadata["category"]); v != "" {
+				category = v
+			}
+			if v := strings.TrimSpace(metadata["difficulty"]); v != "" {
+				difficulty = v
+			}
+		}
+
 		// 在渲染之前修正 Markdown 中的相对链接，使它们在输出目录中
 		// 能够通过以 `/` 开头的绝对路径访问。
 		body = fixRelativePathsInMarkdown(body)
@@ -317,13 +383,24 @@ func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
 			return nil, err
 		}
 
+		postDate := info.ModTime()
+		if metadata != nil {
+			if d, found := metadata["date"]; found {
+				if parsed, perr := parseDateString(d); perr == nil {
+					postDate = parsed
+				}
+			}
+		}
+
 		post := Post{
-			Title:     title,
-			Slug:      slug,
-			Path:      outPath,
-			BlogTitle: "", // 现在仅一个仓库，无需博客标题
-			Date:      info.ModTime(),
-			Content:   template.HTML(buf.String()),
+			Title:      title,
+			Slug:       slug,
+			Path:       outPath,
+			BlogTitle:  "", // 现在仅一个仓库，无需博客标题
+			Date:       postDate,
+			Category:   category,
+			Difficulty: difficulty,
+			Content:    template.HTML(buf.String()),
 		}
 		posts = append(posts, post)
 	}
@@ -363,17 +440,74 @@ func writePosts(outputDir string, posts []Post) error {
 	return nil
 }
 
+// renderMarkdownToHTML 将 Markdown 内容转换为 HTML
+func renderMarkdownToHTML(markdown string) (template.HTML, error) {
+	md := goldmark.New(
+		goldmark.WithExtensions(
+			extension.GFM,
+			extension.Linkify,
+			extension.Strikethrough,
+			extension.Typographer,
+			extension.Table,
+			extension.DefinitionList,
+			extension.Footnote,
+			&katex.Extender{},
+		),
+	)
+
+	var buf bytes.Buffer
+	if err := md.Convert([]byte(markdown), &buf); err != nil {
+		return "", err
+	}
+	return template.HTML(rewriteRelativeLinksInHTML(buf.String())), nil
+}
+
 // writeGlobalIndex 生成全站首页（根目录 index.html 和 /index）
-func writeGlobalIndex(outputDir string, posts []Post) error {
+func writeGlobalIndex(outputDir string, posts []Post, repoDir string) error {
 	tmpl, err := loadTemplate("index")
 	if err != nil {
 		return err
 	}
 
+	latestCount := 3
+	if len(posts) < latestCount {
+		latestCount = len(posts)
+	}
+	latestPosts := posts[:latestCount]
+
+	categories := make(map[string][]Post)
+	for _, p := range posts {
+		cat := strings.TrimSpace(p.Category)
+		if cat == "" {
+			cat = "未分类"
+		}
+		categories[cat] = append(categories[cat], p)
+	}
+
+	readmePaths := []string{"README.md", "readme.md"}
+	readmeHTML := template.HTML("")
+	for _, rp := range readmePaths {
+		readmePath := filepath.Join(repoDir, rp)
+		if _, err := os.Stat(readmePath); err == nil {
+			content, err := os.ReadFile(readmePath)
+			if err == nil {
+				r, err := renderMarkdownToHTML(string(content))
+				if err == nil {
+					readmeHTML = r
+					break
+				}
+			}
+		}
+	}
+
 	data := struct {
-		Posts []Post
+		LatestPosts []Post
+		ReadmeHTML  template.HTML
+		Categories  map[string][]Post
 	}{
-		Posts: posts,
+		LatestPosts: latestPosts,
+		ReadmeHTML:  readmeHTML,
+		Categories:  categories,
 	}
 
 	// 1) 根目录 index.html（/）

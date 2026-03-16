@@ -1,0 +1,39 @@
+# Go build outputs
+/bin/
+/pkg/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Dependency directories
+vendor/
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Go test cache
+*.test
+**/testdata/*
+
+# Go module files (optional local)
+go.sum
+
+# Log files
+*.log
+
+# Generated site/build artifacts
+/public/
+/repos/
+
+# Temporary files
+*.tmp
+*.temp
+
+goblog
+config.json

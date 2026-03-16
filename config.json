@@ -1,7 +1,7 @@
 {
   "repos": [
     {
-      "url": "git@github.com:you/example-blog.git"
+      "url": "http://github.com/minicago/minicagoBlog.git"
     }
   ]
 }

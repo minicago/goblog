@@ -1,21 +1,71 @@
-{{ define "title" }}首页 - minicago blog{{ end }}
+{{ define "title" }}首页 - goblog{{ end }}
 {{ define "content" }}
-<h2>最新文章</h2>
-{{ if not .Posts }}
-<p>还没有任何文章。请在 <code>config.json</code> 中配置仓库，并在对应仓库中添加 Markdown 文件后触发一次构建。</p>
-{{ else }}
-<ul>
-    {{ range .Posts }}
-    <li>
-        <a href="/{{ .Path }}">{{ .Title }}</a>
-        <span style="color:#9ca3af;font-size:.85rem;margin-left:.25rem">
-            {{ .Date.Format "2006-01-02 15:04" }}
-        </span>
-        <span style="color:#6b7280;font-size:.8rem;margin-left:.25rem">
-            [<a href="/{{ .BlogTitle }}">{{ .BlogTitle }}</a>]
-        </span>
-    </li>
+<style>
+.home-section { margin-bottom: 1.8rem; }
+.home-section h2 { border-bottom: 2px solid #e5e7eb; padding-bottom: .5rem; margin-bottom: 1rem; }
+.article-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.article-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 1rem; box-shadow: 0 8px 20px rgba(15, 23, 42, .08); transition: transform .2s ease, box-shadow .2s ease; }
+.article-card:hover { transform: translateY(-3px); box-shadow: 0 14px 28px rgba(15, 23, 42, .16); }
+.article-title { font-size: 1.03rem; font-weight: 700; color: #1f2937; text-decoration: none; }
+.article-meta { margin-top: .45rem; font-size: .8rem; color: #6b7280; }
+.article-meta span { margin-right: .55rem; }
+.readme-content { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 1rem; }
+.category-box { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: .9rem .9rem 1rem; }
+.category-title { margin: 0 0 .5rem; color: #1d4ed8; font-size: 1rem; }
+.category-list li { margin-bottom: .45rem; }
+.category-list a { font-weight: 600; color: #1d4ed8; text-decoration: none; }
+.category-list a:hover { text-decoration: underline; }
+</style>
+
+<section class="home-section">
+    <h2>最新文章（最近3篇）</h2>
+    {{ if not .LatestPosts }}
+    <p>还没有任何文章。请在 <code>config.json</code> 中配置仓库，并添加 Markdown 文件后触发构建。</p>
+    {{ else }}
+    <div class="article-grid">
+        {{ range .LatestPosts }}
+        <article class="article-card">
+            <a class="article-title" href="/{{ .Path }}">{{ .Title }}</a>
+            <div class="article-meta">
+                <span>发布时间：{{ .Date.Format "2006-01-02 15:04" }}</span>
+                {{ if .Category }}<span>分类：{{ .Category }}</span>{{ end }}
+                {{ if .Difficulty }}<span>难度：{{ .Difficulty }}</span>{{ end }}
+            </div>
+        </article>
+        {{ end }}
+    </div>
     {{ end }}
-{{ end }}
+</section>
+
+<section class="home-section">
+    <h2>博客简介 (README)</h2>
+    {{ if .ReadmeHTML }}
+    <div class="readme-content">{{ .ReadmeHTML }}</div>
+    {{ else }}
+    <p>当前仓库没有 README.md，请在仓库根目录添加一个。</p>
+    {{ end }}
+</section>
+
+<section class="home-section">
+    <h2>全部文章（按分类）</h2>
+    {{ if not .Categories }}
+    <p>暂无分类文章。</p>
+    {{ else }}
+    {{ range $cat, $posts := .Categories }}
+    <div class="category-box">
+        <h3 class="category-title">{{ $cat }}</h3>
+        <ul class="category-list" style="list-style:none;padding:0;margin:0;">
+            {{ range $posts }}
+            <li>
+                <a href="/{{ .Path }}">{{ .Title }}</a>
+                <span style="color:#6b7280;font-size:.78rem;margin-left:.55rem;">{{ .Date.Format "2006-01-02" }}</span>
+                {{ if .Difficulty }}<span style="color:#f97316;font-size:.78rem;margin-left:.4rem;">[难度：{{ .Difficulty }}]</span>{{ end }}
+            </li>
+            {{ end }}
+        </ul>
+    </div>
+    {{ end }}
+    {{ end }}
+</section>
 {{ end }}
 
