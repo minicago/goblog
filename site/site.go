@@ -38,14 +38,16 @@ type Config struct {
 
 // Post 表示一篇博客文章的元信息和内容
 type Post struct {
-	Title      string
-	Slug       string
-	Path       string // 相对输出路径，例如 "go/hello-world/index.html"
-	BlogTitle  string // 来自 RepoConfig.Title，用于 hostname/{title}
-	Date       time.Time
-	Category   string
-	Difficulty string
-	Content    template.HTML
+	Title        string
+	Slug         string
+	Path         string // 相对输出路径，例如 "go/hello-world/index.html"
+	PDFPath      string // 相对输出路径，例如 "go/hello-world/hello-world.pdf"
+	MarkdownPath string // 源markdown文件路径
+	BlogTitle    string // 来自 RepoConfig.Title，用于 hostname/{title}
+	Date         time.Time
+	Category     string
+	Difficulty   string
+	Content      template.HTML
 }
 
 // BuildSite 从 config.json 中读取唯一的仓库，扫描仓库根目录下的 Markdown 文件并生成到 outputDir。
@@ -377,6 +379,7 @@ func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
 
 		slug := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		outPath := filepath.ToSlash(filepath.Join(slug, "index.html"))
+		pdfPath := filepath.ToSlash(filepath.Join(slug, slug+".pdf"))
 
 		info, err := os.Stat(path)
 		if err != nil {
@@ -393,14 +396,16 @@ func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
 		}
 
 		post := Post{
-			Title:      title,
-			Slug:       slug,
-			Path:       outPath,
-			BlogTitle:  repo.Title,
-			Date:       postDate,
-			Category:   category,
-			Difficulty: difficulty,
-			Content:    template.HTML(buf.String()),
+			Title:        title,
+			Slug:         slug,
+			Path:         outPath,
+			PDFPath:      pdfPath,
+			MarkdownPath: path,
+			BlogTitle:    repo.Title,
+			Date:         postDate,
+			Category:     category,
+			Difficulty:   difficulty,
+			Content:      template.HTML(buf.String()),
 		}
 		posts = append(posts, post)
 	}
@@ -436,8 +441,22 @@ func writePosts(outputDir string, posts []Post) error {
 			return err
 		}
 		_ = f.Close()
+
+		// 生成PDF
+		pdfPath := filepath.Join(outputDir, filepath.FromSlash(p.PDFPath))
+		if err := generatePDF(p.MarkdownPath, pdfPath); err != nil {
+			return fmt.Errorf("生成PDF失败 %s: %w", p.MarkdownPath, err)
+		}
 	}
 	return nil
+}
+
+// generatePDF 使用pandoc从markdown生成PDF
+func generatePDF(markdownPath, pdfPath string) error {
+	cmd := exec.Command("pandoc", markdownPath, "-o", pdfPath, "--pdf-engine=xelatex", "--variable", "CJKmainfont=Noto Sans CJK SC")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // renderMarkdownToHTML 将 Markdown 内容转换为 HTML

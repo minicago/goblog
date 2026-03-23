@@ -30,6 +30,7 @@
                 <span>发布时间：{{ .Date.Format "2006-01-02 15:04" }}</span>
                 {{ if .Category }}<span>分类：{{ .Category }}</span>{{ end }}
                 {{ if .Difficulty }}<span>难度：{{ .Difficulty }}</span>{{ end }}
+                <a href="/{{ .PDFPath }}" style="margin-left: 1rem; color: #1d4ed8; text-decoration: none;">[PDF]</a>
             </div>
         </article>
         {{ end }}
@@ -60,6 +61,7 @@
                 <a href="/{{ .Path }}">{{ .Title }}</a>
                 <span style="color:#6b7280;font-size:.78rem;margin-left:.55rem;">{{ .Date.Format "2006-01-02" }}</span>
                 {{ if .Difficulty }}<span style="color:#f97316;font-size:.78rem;margin-left:.4rem;">[难度：{{ .Difficulty }}]</span>{{ end }}
+                <a href="/{{ .PDFPath }}" style="margin-left: 0.5rem; color: #1d4ed8; text-decoration: none; font-size: .78rem;">[PDF]</a>
             </li>
             {{ end }}
         </ul>

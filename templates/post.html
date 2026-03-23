@@ -6,6 +6,7 @@
         发布于 {{ .Date.Format "2006-01-02 15:04" }}
         {{ if .Category }} · 分类：<strong>{{ .Category }}</strong>{{ end }}
         {{ if .Difficulty }} · 难度：<strong>{{ .Difficulty }}</strong>{{ end }}
+        · <a href="/{{ .PDFPath }}" style="color:#1d4ed8;text-decoration:none;">下载PDF</a>
     </p>
     <hr style="margin:1rem 0 1.5rem;border:none;border-top:1px solid #e5e7eb">
     <div class="post-body">
