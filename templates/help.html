@@ -25,6 +25,23 @@
     └── subdir/
 </code></pre>
 
+<h3>3. Markdown 文件格式</h3>
+<p>每个 Markdown 文件需要包含 metadata 代码段，格式如下：</p>
+<pre><code>---
+title: 文章标题
+date: 2024-01-01 12:00
+category: 分类名称
+difficulty: 难度等级
+---
+文章内容（支持 Markdown 语法）
+</code></pre>
+<ul>
+    <li><code>title</code>：文章标题，必填。</li>
+    <li><code>date</code>：发布时间，必填，格式为 <code>YYYY-MM-DD HH:MM</code>。</li>
+    <li><code>category</code>：文章分类，可选。</li>
+    <li><code>difficulty</code>：文章难度等级，可选。</li>
+</ul>
+
 <h3>3. 访问说明</h3>
 <ul>
     <li><code>/index</code>：文章列表</li>

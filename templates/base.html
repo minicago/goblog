@@ -78,8 +78,8 @@
 </head>
 <body>
 <header>
-    <h1><a href="/index">我的goblog</a></h1>
-    <p>git博客挂载助手</p>
+    <h1><a href="/index">{{ if .BlogTitle }}{{ .BlogTitle }}{{ else }}我的goblog{{ end }}</a></h1>
+    <p>{{ if .BlogTitle }}{{ .BlogTitle }}{{ else }}goblog{{ end }} 的 Git 仓库内容聚合</p>
 </header>
 
 <main>

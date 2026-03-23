@@ -98,7 +98,7 @@ func BuildSite(configPath, outputDir string) error {
 	if err := writePosts(outputDir, posts); err != nil {
 		return err
 	}
-	if err := writeGlobalIndex(outputDir, posts, repo.Dir); err != nil {
+	if err := writeGlobalIndex(outputDir, posts, repo.Dir, repo.Title); err != nil {
 		return err
 	}
 	// 个人博客功能无需生成额外索引
@@ -396,7 +396,7 @@ func collectPostsFromRepo(repo RepoConfig) ([]Post, error) {
 			Title:      title,
 			Slug:       slug,
 			Path:       outPath,
-			BlogTitle:  "", // 现在仅一个仓库，无需博客标题
+			BlogTitle:  repo.Title,
 			Date:       postDate,
 			Category:   category,
 			Difficulty: difficulty,
@@ -463,7 +463,7 @@ func renderMarkdownToHTML(markdown string) (template.HTML, error) {
 }
 
 // writeGlobalIndex 生成全站首页（根目录 index.html 和 /index）
-func writeGlobalIndex(outputDir string, posts []Post, repoDir string) error {
+func writeGlobalIndex(outputDir string, posts []Post, repoDir, blogTitle string) error {
 	tmpl, err := loadTemplate("index")
 	if err != nil {
 		return err
@@ -504,10 +504,12 @@ func writeGlobalIndex(outputDir string, posts []Post, repoDir string) error {
 		LatestPosts []Post
 		ReadmeHTML  template.HTML
 		Categories  map[string][]Post
+		BlogTitle   string
 	}{
 		LatestPosts: latestPosts,
 		ReadmeHTML:  readmeHTML,
 		Categories:  categories,
+		BlogTitle:   blogTitle,
 	}
 
 	// 1) 根目录 index.html（/）
@@ -543,9 +545,11 @@ func writeBlogIndexes(outputDir string, postsByBlog map[string][]Post) error {
 		}
 		outPath := filepath.Join(dir, "index.html")
 		data := struct {
-			Posts []Post
+			Posts     []Post
+			BlogTitle string
 		}{
-			Posts: posts,
+			Posts:     posts,
+			BlogTitle: title,
 		}
 		if err := writeTemplateFile(outPath, tmpl, data); err != nil {
 			return err
@@ -567,10 +571,17 @@ func writeHelp(outputDir string, repos []RepoConfig) error {
 	}
 	outPath := filepath.Join(dir, "index.html")
 
+	blogTitle := "goblog"
+	if len(repos) > 0 && repos[0].Title != "" {
+		blogTitle = repos[0].Title
+	}
+
 	data := struct {
-		Repos []RepoConfig
+		Repos     []RepoConfig
+		BlogTitle string
 	}{
-		Repos: repos,
+		Repos:     repos,
+		BlogTitle: blogTitle,
 	}
 
 	return writeTemplateFile(outPath, tmpl, data)
